@@ -1,0 +1,466 @@
+---
+title: "HW 6"
+author: "Devon Park"
+date: "2025-12-03"
+output: github_document
+---
+
+
+```{r}
+library(tidyverse)
+library(broom)
+
+library(modelr)
+library(mgcv)
+
+set.seed(1)
+```
+# Problem 1
+The Washington Post has gathered data on homicides in 50 large U.S. cities and made the data available through a GitHub repository here. You can read their accompanying article here.
+
+### Clean the data
+###### Step 1. Make variables (2)
+Create a city_state variable (e.g. “Baltimore, MD”) and a binary variable indicating whether the homicide is solved.
+
+###### Step 2. Omit the following cities: 
+- Dallas, TX (does not report victim race)
+- Phoenix, AZ (does not report victim race)
+- Kansas City, MO (does not report victim race)
+- Tulsa, AL (data entry mistake)
+
+###### Step 3. Filter Rsults:
+For this problem, limit your analysis those for whom victim_race is white or black. Be sure that victim_age is numeric.
+
+```{r}
+homicide_df = 
+  read_csv("Data/homicide-data.csv")|>
+  janitor::clean_names()
+```
+
+
+```{r}
+
+homicides = homicide_df |>
+  
+  #create city state variable that combines variables city and state and uses delimeter ", ".
+  
+  mutate(city_state = str_c(city, state, sep = ", "),
+         solved_case = case_when(
+              disposition == "Closed by arrest" ~ 1, #the only option where the case is solved
+              TRUE ~ 0 #for all other options "Open/No arrest" or "Closed without arrest" make these 0
+         ),
+         victim_age = as.numeric(victim_age)) |> #Values that were previouls "Unknown" are now NA
+  
+  filter(!(city_state %in% c("Dallas, TX", "Phoenix, AZ",  "Kansas City, MO", "Tulsa, AL")),
+        victim_race %in% c("White", "Black")) 
+
+  
+```
+
+As we will be looking at victim age, sex and race as predictors, I looked at what values these variables take in the dataset. 
+```{r}
+  homicide_df |> distinct(victim_race)
+  homicide_df |> distinct(victim_sex)
+  homicide_df |> distinct(victim_age)
+```
+
+There are several "Unkown" values in the vicitim_race and victim_sex columns and several NA values in the victim_age column. All of these were removed before the regression model was ran. 
+
+```{r}
+homicides = homicides |> 
+  filter(
+  victim_sex %in% c("Male", "Female"),
+  victim_race %in% c("Hispanic", "White","Other", "Black", "Asian")
+) |> 
+  drop_na(victim_age)
+```
+
+### Logistic Regression Babyyyyyyy
+- For the city of Baltimore, MD, use the glm function to fit a logistic regression with resolved vs unresolved as the outcome and victim age, sex and race as predictors. 
+- Save the output of glm as an R object; apply the broom::tidy to this object; and obtain the estimate and confidence interval of the adjusted odds ratio for solving homicides comparing male victims to female victims keeping all other variables fixed.
+
+```{r}
+baltimore =
+  homicides |>
+  filter(city_state == "Baltimore, MD")
+```
+
+```{r}
+baltimore_fit =
+  glm(
+    solved_case ~ victim_age + victim_sex + victim_race,
+    data = baltimore,
+    family = binomial()
+  )
+
+
+
+  baltimore_fit |> 
+  broom::tidy() |> 
+  mutate(
+    term = str_replace_all(term, c(
+        "victim_sex" = "victim_sex: ",
+        "victim_race" = "victim_race: "))
+  ) |> 
+  select(term, estimate, p.value) |> 
+  knitr::kable(digits = 3)
+```
+
+```{r}
+baltimore_or =
+  baltimore_fit |>
+  broom::tidy(conf.int = TRUE, exponentiate = TRUE) |>
+  select(term, estimate, conf.low, conf.high)|>
+    mutate(
+    term = str_replace_all(term, c(
+        "victim_sex" = "victim_sex: ",
+        "victim_race" = "victim_race: "))
+  ) |> 
+  knitr::kable(digits = 3)
+
+  baltimore_fit |>
+  broom::tidy(conf.int = TRUE, exponentiate = TRUE) |>
+  filter(term == "victim_sexMale") |> 
+  select(term, estimate, conf.low, conf.high)|>
+  knitr::kable(digits = 3)
+```
+
+
+### Regression for all the cities
+Now run glm for each of the cities in your dataset, and extract the adjusted odds ratio (and CI) for solving homicides comparing male victims to female victims. Do this within a “tidy” pipeline, making use of purrr::map, list columns, and unnest as necessary to create a dataframe with estimated ORs and CIs for each city.
+
+group all rows with the same city state 
+```{r}
+city_models =
+  homicides |>
+  group_by(city_state) |>
+  nest()
+```
+
+Use map to run glm across each row 
+```{r}
+city_models =
+  city_models |>
+  mutate(
+    fit = map(data, ~ glm(
+          solved_case ~ victim_age + victim_sex + victim_race,
+          data   = .x,
+          family = binomial()
+        ))
+  )
+```
+
+Exponentiate to get the OR and CIs
+```{r}
+city_models =
+  city_models |>
+  mutate(
+    results = map(
+      fit,
+      ~ tidy(.x, conf.int = TRUE, exponentiate = TRUE)
+    )
+  )
+```
+
+Specifically pull out the odds ratio of solved cases for males vs females. (adjsuting for age and race)
+```{r}
+city_or =
+  city_models |>
+  select(city_state, results) |>
+  unnest(results) |>
+  filter(term == "victim_sexMale") |>
+  select(
+    city_state,
+    estimate,   # OR
+    conf.low,   # lower 95% CI
+    conf.high   # upper 95% CI
+  ) |>
+  arrange(estimate)
+```
+
+Nice outout!
+```{r}
+city_or |> knitr::kable(digits = 3)
+```
+
+ 
+
+##### In one pipeline: (but this is kind of confusing to my eyes)
+ 
+```{r}
+city_or =
+  homicides |>
+  group_by(city_state) |>
+  nest() |> 
+  mutate(
+    fit = map(data, ~ glm(
+          solved_case ~ victim_age + victim_sex + victim_race,
+          data   = .x,
+          family = binomial())),
+    results = map(fit, ~ tidy(.x, conf.int = TRUE, exponentiate = TRUE))
+  ) |>
+  select(city_state, results) |>
+  unnest(results) |>
+  filter(term == "victim_sexMale") |>
+  select(
+    city_state,
+    estimate,   #the OR
+    conf.low,   #95%CI lower bound
+    conf.high   #95%CI upper bound
+  ) |>
+  arrange(estimate) 
+
+city_or |> 
+  knitr::kable(digits = 3)
+```
+
+
+
+Create a plot that shows the estimated ORs and CIs for each city. Organize cities according to estimated OR, and comment on the plot.
+
+
+```{r}
+city_or |>
+  ggplot(aes(x = fct_reorder(city_state, estimate), y = estimate)) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high)) +
+  coord_flip() +
+  labs(
+    x = "City",
+    y = "Adjusted OR (Male vs Female)",
+    title = "Adjusted odds of homicide being solved\nMale vs Female victims by city",
+    subtitle = "OR > 1: male-victim homicides more likely to be solved"
+  ) +
+  theme_minimal()
+```
+
+*Interpretation:* Based on the 47 city-states in included in this analysis, most of odds ratios comparing odds of solving cases for male versus female victims were below 1. This means that for most of these placs, the odds of solving the cases for a female victim were higher than the odds of solving a case for a male vicitim after adjusting for race and age. Fresno and Stockton, California , and Alburquerque, New Mexico were the three cities with ORs greater than 1. However, their 95% confidence intervals passed over the null value of 1 which suggests that there is not a statistically significant difference in the odds of solving a case for a male versus female victim. 22 out of the 47 locations had 95% CI that did not include the null value of 1. 
+
+-------
+
+# Problem 2
+
+For this problem, we’ll use the Central Park weather data we’ve seen elsewhere. The code chunk below will import these data from the p8105.datasets package.
+
+```{r}
+#load the dataset
+
+library(p8105.datasets)
+data("weather_df")
+```
+
+The boostrap is helpful when you’d like to perform inference for a parameter / value / summary that doesn’t have an easy-to-write-down distribution in the usual repeated sampling framework. We’ll focus on a simple linear regression with tmax as the response with tmin and prcp as the predictors, and are interested in the distribution of two quantities estimated from these data:$r^2$ and $\hat\beta_1 /\hat\beta_2$
+
+Use 5000 bootstrap samples and, for each bootstrap sample, produce estimates of these two quantities. Plot the distribution of your estimates, and describe these in words. Using the 5000 bootstrap estimates, identify the 2.5% and 97.5% quantiles to provide a 95% confidence interval for $r^2$ and $\hat\beta_1 /\hat\beta_2$
+
+
+Note: broom::glance() is helpful for extracting $r^2$
+ from a fitted regression, and broom::tidy() (with some additional wrangling) should help in computing  $\hat\beta_1 /\hat\beta_2$
+
+
+```{r}
+#remove missing values in tmax, tmin, and prcp columns 
+
+weather_clean =
+  weather_df |>
+  drop_na(tmax, tmin, prcp)
+```
+
+```{r}
+#Attempt to create a bootstrap function
+
+boot_results =
+  tibble(
+    boot_id = 1:5000) |> #df of 5000 called boot_results
+  mutate(
+    boot_sample = map(boot_id,
+      ~ sample_n(weather_clean, size = nrow(weather_clean), replace = TRUE)),
+    boot_fit = map(boot_sample,
+      ~ lm(tmax ~ tmin + prcp, data = .x))
+  )
+```
+
+
+
+
+# Problem 2
+Load and clean names
+```{r}
+weather_df =
+  weather_df |>
+  janitor::clean_names() |>
+  drop_na(tmax, tmin, prcp)
+```
+
+Create a list column and draw 5000 bootstrap samples
+```{r}
+boot_sample = function(df){
+  sample_frac(df, replace = TRUE) #draws saple of size of our df (with replacement making it a bootstrap)
+}
+
+boot_straps=
+  tibble(strap_number = 1:5000)|>
+  mutate(
+    strap_sample = map(strap_number, \(i) boot_sample(df = weather_df))
+  )
+
+boot_straps
+```
+
+Runs SLR for all of the bootstrap samples. Then uses broom::glance to extract $r^2$ and broom::tidy to obtain $\beta_1 (tmin)$ and $\beta_2 (prcp)$. Unnest data and keep only the necessary columns. Compute $\hat\beta_1 /\hat\beta_2$, a new variable called, $\beta_{est} $. 
+```{r}
+
+bootstrap_results = 
+  boot_straps |>
+  mutate(
+    models = map(strap_sample, \(df) lm(tmax ~ tmin + prcp, data = df)),
+    rsq_results = map(models, ~ glance(.x) |> select(r.squared)), #get me rsquared value. need to include the select or my unnest doesnt work becuase it shows up twice with beta_resutls
+    beta_results = map(models, ~ tidy(.x) |> select(term, estimate))) |> #gets me rows for intercept, tmin, and prcp
+  select(-strap_sample, -models) |>
+  unnest(rsq_results) |> #i couldnt get it to work by unnnesting at the same time, so i needed to do them separately
+  unnest(beta_results) |>
+  filter(term %in% c("tmin", "prcp")) |>
+  pivot_wider( #creates the columns that i want (tmin and prcp)
+    names_from = term,
+    values_from = estimate) |>
+  mutate(beta_est = tmin / prcp) |> #my new variable
+  select(strap_number, r.squared, beta_est)
+
+```
+
+R squared graphic
+```{r}
+bootstrap_results |>
+  ggplot(aes(x = r.squared)) +
+  geom_density() +
+  theme_minimal()
+```
+The r.squared estimates appear to have a bell-curved distribution. The lowest densities occurs at the maximum and minimum r.squared values. 
+
+
+beta_est graphic
+```{r}
+bootstrap_results |>
+  ggplot(aes(x = beta_est)) +
+  geom_density() +
+  theme_minimal()
+```
+The distribution of B1/B2 estimates have a tail towards the lower values of beta_est.
+
+
+
+Get 95% confidence interval for r.squared and b1/b2 by looking at 2.5 and 97.5 quantiles. Then create a tidy table of the r.squared and b1/b2 estimates with the respective confidence intervals, in each sample.
+
+```{r}
+boostrap_ci=
+bootstrap_results |>
+  summarise(
+    ci_lower_est = quantile(r.squared, 0.025),
+    ci_upper_est = quantile(r.squared, 0.975),
+    ci_lower_beta = quantile(beta_est, 0.025),
+    ci_upper_beta = quantile(beta_est, 0.975))
+    
+```
+
+Pretty output:
+
+```{r}
+ci_table =
+  tibble(
+    quantity = c("r.squared", "beta_ratio"),
+    ci_lower = c(boostrap_ci$ci_lower_est,  boostrap_ci$ci_lower_beta),
+    ci_upper = c(boostrap_ci$ci_upper_est,  boostrap_ci$ci_upper_beta)
+  )
+
+ci_table |> knitr::kable(digits = 3)
+```
+
+
+# Problem 3
+This imports the dataset.
+```{r}
+data_path <- 
+"C:/Users/dmben/OneDrive/Desktop/data_science_1/p8105_hw6_dmb2257/"
+
+birthweight_df = read.csv(file = "p8105_hw6_dmb2257_files/birthweight.csv")
+```
+
+This cleans the dataset, renaming the values for categorical variables and changing the numeric values from integers to numeric. 
+```{r}
+bwt_tidy_df=
+  birthweight_df|>
+  janitor::clean_names()|>
+  mutate(
+    babysex = case_match(
+      babysex,
+      1 ~ "male",
+      2 ~ "female"),
+    frace = case_match(
+      frace,
+      1 ~ "white",
+      2 ~ "black",
+      3 ~ "asian",
+      4 ~ "puerto rican",
+      8 ~ "other",
+      9 ~ "unknown"),
+    mrace = case_match(
+      mrace,
+      1 ~ "white",
+      2 ~ "black",
+      3 ~ "asian",
+      4 ~ "puerto rican",
+      8 ~ "other"), 
+    malform = case_match(
+      malform,
+      0 ~ "absent",
+      1 ~ "present"),
+    bhead = as.numeric(bhead),
+    blength = as.numeric(blength),
+    bwt = as.numeric(bwt),
+    delwt = as.numeric(delwt),
+    fincome = as.numeric(fincome),
+    menarche = as.numeric(menarche),
+    mheight = as.numeric(mheight),
+    momage = as.numeric(momage),
+    parity = as.numeric(parity),  
+    pnumlbw = as.numeric(pnumlbw),
+    pnumsga = as.numeric(pnumsga),
+    ppwt = as.numeric(ppwt),
+    wtgain = as.numeric(wtgain)
+  )|>
+  drop_na()
+```
+
+This is the proposed regression model for birthweight I will be using. The hypothesized structure for the factors that underly birthweight include delwt,  menarche, mheight, momage,  mrace,  ppbmi,  ppwt,  smoken ,  wtgain.
+```{r}
+mod1 = lm(bwt ~ delwt + menarche + mheight+ momage + mrace + ppbmi + ppwt+ smoken + wtgain, data = bwt_tidy_df)
+```
+
+This creates a plot of model residuals against fitted values.
+```{r}
+resid_df = 
+modelr::add_residuals(bwt_tidy_df, mod1)
+
+pred_df =
+modelr::add_predictions(bwt_tidy_df, mod1)
+
+res_pred_df = 
+  left_join(resid_df, pred_df)
+
+res_pred_df|>
+  ggplot(aes(x = pred, y = resid))+
+  geom_point()
+```
+
+
+
+This creates a model using length at birth and gestational age as predictors
+```{r}
+mod2 = lm(bwt ~ blength + gaweeks, data = bwt_tidy_df)
+```
+
+This creates a model using head circumference, length, sex, and all interactions
+
+```{r}
+mod3 = lm(bwt ~ bhead*blength*babysex + bhead*blength + blength*babysex + bhead*babysex +bhead +blength +babysex, data = bwt_tidy_df)
+```
