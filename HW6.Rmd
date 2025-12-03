@@ -5,16 +5,17 @@ date: "2025-12-03"
 output: github_document
 ---
 
-
 ```{r}
 library(tidyverse)
 library(broom)
 
 library(modelr)
 library(mgcv)
-
+library(glmnet)
+library(palmerpenguins)
 set.seed(1)
 ```
+
 # Problem 1
 The Washington Post has gathered data on homicides in 50 large U.S. cities and made the data available through a GitHub repository here. You can read their accompanying article here.
 
@@ -215,7 +216,7 @@ city_or |>
 ```
 
 
-
+#### Plooooot making 
 Create a plot that shows the estimated ORs and CIs for each city. Organize cities according to estimated OR, and comment on the plot.
 
 
@@ -257,33 +258,6 @@ Use 5000 bootstrap samples and, for each bootstrap sample, produce estimates of 
 Note: broom::glance() is helpful for extracting $r^2$
  from a fitted regression, and broom::tidy() (with some additional wrangling) should help in computing  $\hat\beta_1 /\hat\beta_2$
 
-
-```{r}
-#remove missing values in tmax, tmin, and prcp columns 
-
-weather_clean =
-  weather_df |>
-  drop_na(tmax, tmin, prcp)
-```
-
-```{r}
-#Attempt to create a bootstrap function
-
-boot_results =
-  tibble(
-    boot_id = 1:5000) |> #df of 5000 called boot_results
-  mutate(
-    boot_sample = map(boot_id,
-      ~ sample_n(weather_clean, size = nrow(weather_clean), replace = TRUE)),
-    boot_fit = map(boot_sample,
-      ~ lm(tmax ~ tmin + prcp, data = .x))
-  )
-```
-
-
-
-
-# Problem 2
 Load and clean names
 ```{r}
 weather_df =
@@ -348,7 +322,6 @@ bootstrap_results |>
 The distribution of B1/B2 estimates have a tail towards the lower values of beta_est.
 
 
-
 Get 95% confidence interval for r.squared and b1/b2 by looking at 2.5 and 97.5 quantiles. Then create a tidy table of the r.squared and b1/b2 estimates with the respective confidence intervals, in each sample.
 
 ```{r}
@@ -376,18 +349,40 @@ ci_table |> knitr::kable(digits = 3)
 ```
 
 
-# Problem 3
-This imports the dataset.
-```{r}
-data_path <- 
-"C:/Users/dmben/OneDrive/Desktop/data_science_1/p8105_hw6_dmb2257/"
 
-birthweight_df = read.csv(file = "p8105_hw6_dmb2257_files/birthweight.csv")
+# Problem 3
+In this problem, you will analyze data gathered to understand the effects of several variables on a child’s birthweight. This dataset, available here, consists of roughly 4000 children and includes the following variables:
+
+- babysex: baby’s sex (male = 1, female = 2)
+- bhead: baby’s head circumference at birth (centimeters)
+- blength: baby’s length at birth (centimeters)
+- bwt: baby’s birth weight (grams)
+- delwt: mother’s weight at delivery (pounds)
+- fincome: family monthly income (in hundreds, rounded)
+- frace: father’s race (1 = White, 2 = Black, 3 = Asian, 4 = Puerto Rican, 8 = Other, 9 = Unknown)
+- gaweeks: gestational age in weeks
+- malform: presence of malformations that could affect weight (0 = absent, 1 = present)
+- menarche: mother’s age at menarche (years)
+- mheigth: mother’s height (inches)
+- momage: mother’s age at delivery (years)
+- mrace: mother’s race (1 = White, 2 = Black, 3 = Asian, 4 = Puerto Rican, 8 = Other)
+- parity: number of live births prior to this pregnancy
+- pnumlbw: previous number of low birth weight babies
+- pnumgsa: number of prior small for gestational age babies
+- ppbmi: mother’s pre-pregnancy BMI
+- ppwt: mother’s pre-pregnancy weight (pounds)
+- smoken: average number of cigarettes smoked per day during pregnancy
+- wtgain: mother’s weight gain during pregnancy (pounds)
+
+##### Step 1: Load and tidy data
+- Load and clean the data for regression analysis (i.e. use appropriate variable names, convert numeric to factor where appropriate, check for the presence of missing data, etc.).
+
+```{r}
+birthweight_df = read.csv(file = "Data/birthweight.csv")
 ```
 
-This cleans the dataset, renaming the values for categorical variables and changing the numeric values from integers to numeric. 
 ```{r}
-bwt_tidy_df=
+birthweight_df_tidy =
   birthweight_df|>
   janitor::clean_names()|>
   mutate(
@@ -424,43 +419,361 @@ bwt_tidy_df=
     momage = as.numeric(momage),
     parity = as.numeric(parity),  
     pnumlbw = as.numeric(pnumlbw),
-    pnumsga = as.numeric(pnumsga),
+    pnumgsa = as.numeric(pnumsga),
     ppwt = as.numeric(ppwt),
     wtgain = as.numeric(wtgain)
   )|>
   drop_na()
 ```
 
-This is the proposed regression model for birthweight I will be using. The hypothesized structure for the factors that underly birthweight include delwt,  menarche, mheight, momage,  mrace,  ppbmi,  ppwt,  smoken ,  wtgain.
-```{r}
-mod1 = lm(bwt ~ delwt + menarche + mheight+ momage + mrace + ppbmi + ppwt+ smoken + wtgain, data = bwt_tidy_df)
-```
+#### Step 2: Create Regression Model
+- Propose a regression model for birthweight. This model may be based on a hypothesized structure for the factors that underly birthweight, on a data-driven model-building process, or a combination of the two. Describe your modeling process and show a plot of model residuals against fitted values – use add_predictions and add_residuals in making this plot.
 
-This creates a plot of model residuals against fitted values.
-```{r}
-resid_df = 
-modelr::add_residuals(bwt_tidy_df, mod1)
+Note that although we expect your model to be reasonable, model building itself is not a main idea of the course and we don’t necessarily expect your model to be “optimal”.
 
-pred_df =
-modelr::add_predictions(bwt_tidy_df, mod1)
-
-res_pred_df = 
-  left_join(resid_df, pred_df)
-
-res_pred_df|>
-  ggplot(aes(x = pred, y = resid))+
-  geom_point()
-```
-
-
-
-This creates a model using length at birth and gestational age as predictors
-```{r}
-mod2 = lm(bwt ~ blength + gaweeks, data = bwt_tidy_df)
-```
-
-This creates a model using head circumference, length, sex, and all interactions
+I chose the below variables based on a google search. I looked up what factors during pregnancy have been shown to consistently impact birthweight. The hypothesized structure includes the following predictors: 
+- babysex: baby’s sex (males frequently have higher birthweights than females)
+- fincome: family monthly income (in hundreds, rounded)
+- mheigth: mother’s height (inches)
+- wtgain: mother’s weight gain during pregnancy (pounds)
+- gaweeks: gestational age in weeks
+- malform: presence of malformations that could affect weight (0 = absent, 1 = present)
+- momage: mother’s age at delivery (years)
+- pnumgsa: number of prior small for gestational age babies
+- pnumlbw: previous number of low birth weight babies
+- ppbmi: mother’s pre-pregnancy BMI
+- ppwt: mother’s pre-pregnancy weight (pounds)
+- smoken: average number of cigarettes smoked per day during pregnancy
 
 ```{r}
-mod3 = lm(bwt ~ bhead*blength*babysex + bhead*blength + blength*babysex + bhead*babysex +bhead +blength +babysex, data = bwt_tidy_df)
+mod1 = lm(bwt ~ babysex + fincome + mheight + wtgain + gaweeks + malform + momage + pnumgsa + pnumlbw + ppbmi + ppwt + smoken , data = birthweight_df_tidy)
+
+mod1 |> broom::tidy()
 ```
+
+
+```{r}
+birthweight_df_tidy |>
+  add_predictions(mod1) |>
+  add_residuals(mod1) |>
+  ggplot(aes(x = pred, y = resid)) +
+  geom_point(alpha = 0.3) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    title = "Residuals vs Fitted Values for Birthweight Model",
+    x = "Predicted Birthweight",
+    y = "Residuals"
+  ) +
+  theme_minimal()
+```
+
+
+
+#### JUST A LITTLE FUN 
+
+Attempt to build model with LASSO:
+```{r}
+
+# create model matrix (exclude outcome, the first column)
+x = model.matrix(bwt ~ ., data = birthweight_df_tidy)[, -1]
+y = birthweight_df_tidy |> pull(bwt)
+
+lasso_cv = cv.glmnet(x, y, alpha = 1)
+
+plot(lasso_cv)
+lasso_cv$lambda.min  # best lambda - the asymptote 
+
+lasso_fit = glmnet(x, y, alpha = 1, lambda = lasso_cv$lambda.min)
+
+coef(lasso_fit)
+
+
+#Rather than setting lambda up like we did in class, I looked up on chatgpt how I could do this without prespecifying lambda, and it said to use alpha = 1 
+
+# This means that when alpha = 1 in the glmnet() function to apply LASSO regularization, which uses an L1 penalty to shrink some regression coefficients to zero. This performs both regularization and variable selection, retaining only predictors that meaningfully contribute to predicting birthweight.
+
+lasso_fit |> 
+  broom::tidy() |> 
+  select(term, lambda, estimate)
+
+lasso_path <- glmnet(x, y, alpha = 1)   # glmnet automatically generates a whole sequence of lamda values
+
+lasso_path |>
+  broom::tidy() |>
+  select(term, lambda, estimate) |>
+  complete (term, lambda, fill = list(estimate = 0)) |> 
+  filter(term != "(Intercept)") |>
+  ggplot(aes(x = log10(lambda), y = estimate,
+             group = term, color = term)) +
+  geom_line() +
+  geom_vline(
+    xintercept = log10(lasso_cv$lambda.min),
+    linetype = "dashed") +
+  labs(
+    title = "LASSO Coefficient Paths with Cross-Validated Lambda",
+    x = "log10(Lambda)",
+    y = "Coefficient Estimate",
+    color = "Predictor"
+  ) +
+  theme_minimal()
+```
+
+
+### Okay back to the regularly scheduled programming
+
+
+This graphic shows us that the residuals are centered around zero. We see a cloud (which suggests uniform variance. Had we seen a funneling affect we would need to transform our data or if we saw a curve then perhaps linear regression would not be a good fit for the data)
+
+Roughly even across all predicted values (denser around 3000 because we have more values here.) We have not looked at outliers or influential points (see all the points on the extreme ends of predicted birthweight)
+
+Compare your model to two others:
+
+One using length at birth and gestational age as predictors (main effects only)
+
+One using head circumference, length, sex, and all interactions (including the three-way interaction) between these
+
+Make this comparison in terms of the cross-validated prediction error; use crossv_mc and functions in purrr as appropriate.
+
+```{r}
+#Define my comparison models
+#Just the function cuase ill pass the df through during the cross validation step
+
+#Model 2: length at birth and gestational age
+
+fun_mod2 = bwt ~ blength + gaweeks
+
+# Model 3: head, length, sex, and all interaction terms 
+
+fun_mod3 = bwt ~ bhead * blength * babysex #* will get all the main effects and the interactions (secondary and tertiary)
+
+
+
+```
+
+Create my cross validation df using crossv_mc that ill then push my three models through
+```{r}
+cv_df = crossv_mc(birthweight_df_tidy, n = 100, test = 0.2) #create a dataframe of 100 rows each with 80/20 splits as he suggests
+```
+
+```{r}
+cv_results =
+  cv_df |>
+  mutate(
+    # fit models on training data
+    mod1 = map(train, ~ lm(
+      bwt ~ babysex + fincome + mheight + wtgain + gaweeks + malform +
+        momage + pnumgsa + pnumlbw + ppbmi + ppwt + smoken,
+      data = .x
+    )), #take each dataset in train (.x references cv_df from pipe), then fit our regression only with this data and store this data. So at the end. mod1 is a list of 100 fitted models based off the train data column in cv_results
+    mod2 = map(train, ~ lm(fun_mod2, data = .x)), 
+    mod3 = map(train, ~ lm(fun_mod3, data = .x)),
+    #same thing happens for mod2 and mod3 (these become columns in cv_results)
+    
+    # compute RMSE on test data
+    rmse_mod1 = map2_dbl(mod1, test, ~ modelr::rmse(.x, .y)), #take the fitted value from [mod1] and compute the prediction error in the test dataset. Afterwards compute RMSE for the test set
+    rmse_mod2 = map2_dbl(mod2, test, ~ modelr::rmse(.x, .y)),
+    rmse_mod3 = map2_dbl(mod3, test, ~ modelr::rmse(.x, .y))
+  )
+
+#RMSE - a measure of prediction error
+#first argument = mod1 and that corresponds to .x
+#second arguemnt = test and that corresponds to .y
+#map2 over map becuase it takes two parallel arguments 
+#~ is the anonymous function he used inside map2
+```
+
+
+```{r}
+cv_summary =
+  cv_results |>
+  summarise(
+    mean_rmse_mod1 = mean(rmse_mod1),
+    mean_rmse_mod2 = mean(rmse_mod2),
+    mean_rmse_mod3 = mean(rmse_mod3)
+  ) |> 
+  knitr::kable(digits = 2)
+
+cv_summary
+```
+
+
+```{r}
+cv_results |>
+  select(rmse_mod1, rmse_mod2, rmse_mod3) |>
+  pivot_longer(
+    cols = everything(),
+    names_to = "model",
+    values_to = "rmse"
+  ) |>
+  mutate(
+    model = case_match(
+      model,
+      "rmse_mod1" ~ "Model 1",
+      "rmse_mod2" ~ "Model 2",
+      "rmse_mod3" ~ "Model 3"
+    )
+  ) |>
+  ggplot(aes(x = model, y = rmse)) +
+  geom_boxplot() +
+  labs(
+    x = NULL,
+    y = "RMSE",
+    title = "Cross-Validated Prediction Error by Model"
+  ) +
+  theme_minimal()
+```
+
+Based on this graph and the RMSE values for all three models, Model 3 seems to have the best prediction capability. It has the lowest mean RMSE value at 288.42. Model 1, my chosen model, has the highest RMSE at 436.93. 
+
+
+
+### Back on the funky train 
+EXTRA ON LASSO:
+
+```{r}
+#Looking at RMSE from LASSO model
+
+lasso_rmse_min = sqrt(min(lasso_cv$cvm))
+lasso_rmse_min
+
+#but not comparable value to RMSE of od1-mod3 becuase those use monte carlo cv whereas glmnet uses k-fold cross-validation inside (10 fold i think???)
+
+#AKA not apples to apples pooey so lets try again with model selection but make it comparable??? 
+```
+
+
+
+
+```{r}
+#Factor before i start my journey (otherwise it becomes commplicated as a character)
+birthweight_df_tidy = birthweight_df_tidy |>
+  mutate(
+    babysex = factor(babysex),
+    frace   = factor(frace),
+    mrace   = factor(mrace),
+    malform = factor(malform)
+  )
+
+cv_df = crossv_mc(birthweight_df_tidy, n = 100, test = 0.2) #need to reset cv_df now that i fixed the abover variables otherwise the train test will still contain character variables
+
+```
+
+
+This next section (getting cm values from lasso) was a little above my pay grade, so I ended up using a LOT of chat to do this. But this is really just exploratory, so i think that's okay?? 
+
+Atturmpt number 10000000000006? 
+```{r}
+
+lasso_results =
+  cv_df |>
+  mutate(
+    lasso_fit = map(train, ~ {
+      df_train <- as.data.frame(.x)
+      x_train <- model.matrix(bwt ~ ., data = df_train)[, -1]
+      y_train <- df_train$bwt
+      cv.glmnet(x_train, y_train, alpha = 1)
+    }),
+    rmse_lasso = map2_dbl(lasso_fit, test, ~ {
+      df_test <- as.data.frame(.y)
+      x_test  <- model.matrix(bwt ~ ., data = df_test)[, -1]
+      y_test  <- df_test$bwt
+
+      preds <- predict(.x, newx = x_test, s = "lambda.min")
+      sqrt(mean((y_test - preds)^2))
+    })
+  ) 
+```
+
+Join lasso to my other model results
+
+```{r}
+cv_results_all =
+  cv_results |>
+  left_join(lasso_results, by = ".id")
+```
+
+Output values
+```{r}
+
+cv_summary_all =
+  cv_results_all |>
+  summarise(across(starts_with("rmse_"), mean))
+
+
+cv_summary_all |>
+  pivot_longer(cols = everything(),
+               names_to = "model",
+               values_to = "mean_rmse") |>
+  mutate(
+    model = case_when(
+      model == "rmse_mod1"   ~ "Model 1",
+      model == "rmse_mod2"   ~ "Model 2",
+      model == "rmse_mod3"   ~ "Model 3",
+      model == "rmse_lasso"  ~ "Model 4 (LASSO)"
+    )
+  ) |> 
+  knitr::kable(digits=2)
+```
+Based on the abover results, mean RSME is lowest for LASSO model (274.73), so technically best model for prediction is lasso which includes the parameters found when we ran the lasso (this above code does not get the coefficients because each row has its own set of coefficients and we are getting RMSE for that row)
+
+
+```{r}
+cv_results_all |>
+  select(rmse_mod1, rmse_mod2, rmse_mod3, rmse_lasso) |>
+  pivot_longer(
+    cols = everything(),
+    names_to  = "model",
+    values_to = "rmse"
+  ) |>
+  mutate(
+    model = case_when(
+      model == "rmse_mod1"   ~ "Model 1",
+      model == "rmse_mod2"   ~ "Model 2",
+      model == "rmse_mod3"   ~ "Model 3",
+      model == "rmse_lasso"  ~ "Model 4 (LASSO)"
+    ),
+    model = factor(model, levels = c("Model 1", "Model 2", "Model 3", "Model 4 (LASSO)"))
+  ) |>
+  ggplot(aes(x = model, y = rmse)) +
+  geom_boxplot() +
+  labs(
+    x = NULL,
+    y = "RMSE",
+    title = "Cross-Validated Prediction Error by Model (Including LASSO)"
+  ) +
+  theme_minimal()
+```
+
+
+
+Random Analysis: 
+
+how often do my predictors show up in each lasso row?
+
+Get the coefficents at lamnda.min for each row
+```{r}
+lasso_coefs =
+  lasso_results |>
+  mutate(
+    coef_tbl = map(lasso_fit, ~ {
+      # each lasso_fit is a cv.glmnet object
+      broom::tidy(.x$glmnet.fit, s = "lambda.min")
+    })
+  ) |>
+  select(.id, coef_tbl) |>
+  unnest(coef_tbl)
+```
+
+Check out how many times each parameter showed up (look at coefficients for lowsest lambda of each row and count how many times they show up)
+```{r}
+lasso_stability =
+  lasso_coefs |>
+  filter(term != "(Intercept)", estimate != 0) |>
+  distinct(.id, term) |>      # <- ensures each split counted only once
+  count(term, name = "selection_count") |>
+  mutate(selection_rate = selection_count / nrow(cv_df)) |>
+  arrange(desc(selection_rate))
+
+lasso_stability
+```
+
